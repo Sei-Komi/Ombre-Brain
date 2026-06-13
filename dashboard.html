@@ -634,9 +634,9 @@
 </div>
 
 <div class="content" id="list-view">
-  <div class="list-toolbar" style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:24px;">
-    <div class="filters" id="filters" style="flex:1;margin-bottom:0;"></div>
-    <div class="sort-controls">
+  <div class="list-toolbar" style="display:flex;flex-direction:column;gap:12px;margin-bottom:24px;">
+    <div class="filters" id="filters" style="margin-bottom:0;"></div>
+    <div class="sort-controls" style="align-self:flex-end;">
       排序：
       <button class="filter-btn active" id="sort-score" onclick="setSort('score')">按分数</button>
       <button class="filter-btn" id="sort-time" onclick="setSort('time')">按活跃</button>
