@@ -639,7 +639,8 @@
     <div class="sort-controls">
       排序：
       <button class="filter-btn active" id="sort-score" onclick="setSort('score')">按分数</button>
-      <button class="filter-btn" id="sort-time" onclick="setSort('time')">按时间</button>
+      <button class="filter-btn" id="sort-time" onclick="setSort('time')">按活跃</button>
+      <button class="filter-btn" id="sort-created" onclick="setSort('created')">按创建</button>
     </div>
   </div>
   <div class="bucket-list" id="bucket-list">
@@ -1063,6 +1064,7 @@ function setSort(mode) {
   currentSort = mode;
   document.getElementById('sort-score').classList.toggle('active', mode === 'score');
   document.getElementById('sort-time').classList.toggle('active', mode === 'time');
+  document.getElementById('sort-created').classList.toggle('active', mode === 'created');
   renderBuckets(filterBuckets(allBuckets));
 }
 
@@ -1170,6 +1172,12 @@ function sortBuckets(buckets) {
       var tb = b.last_active || b.created || '';
       return tb.localeCompare(ta);
     });
+  } else if (currentSort === 'created') {
+    sorted.sort(function(a, b) {
+      var ta = a.created || '';
+      var tb = b.created || '';
+      return tb.localeCompare(ta);
+    });
   }
   return sorted;
 }
@@ -1185,7 +1193,7 @@ function renderBuckets(buckets) {
     var icon = b.pinned ? '📌' : b.type === 'feel' ? '🫧' : b.digested ? '🌿' : b.resolved ? '💤' : '💭';
     var vPos = Math.round(b.valence * 100);
     var modelV = b.model_valence != null ? ' → V' + b.model_valence.toFixed(1) : '';
-    var timeDisplay = currentSort === 'time' ? formatDate(b.last_active || b.created) : formatTimeAgo(b.last_active || b.created);
+    var timeDisplay = currentSort === 'created' ? formatDate(b.created) : currentSort === 'time' ? formatDate(b.last_active || b.created) : formatTimeAgo(b.last_active || b.created);
     return '<div class="bucket-row" onclick="showDetail(\'' + b.id + '\')">' +
       '<span class="icon">' + icon + '</span>' +
       '<span class="name" title="' + esc(b.name) + '">' + esc(b.name) + '</span>' +
