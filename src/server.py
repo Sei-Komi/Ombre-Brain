@@ -873,7 +873,33 @@ if __name__ == "__main__":
                         # Auto-start GitHub sync loop if configured
                         if _gh_auto_interval > 0:
                             _restart_github_auto_task(_gh_auto_interval)
+                        # Start decay engine at boot, not lazily on first MCP tool.
+                        # 之前 decay 只在 breath/hold/... 首次调用时 ensure_started()，于是：
+                        #   ① 纯用 dashboard、从不调 MCP 工具时，记忆永远不衰减；
+                        #   ② /api/status 在首个工具调用前读到 is_running=False 显示「stopped」，
+                        #      而 pulse 因为自己先 ensure_started() 显示「running」——两处自相矛盾。
+                        # 放到 lifespan 里启动后，引擎始终在跑，两处状态一致。
+                        try:
+                            await decay_engine.start()
+                        except Exception as _decay_exc:
+                            logger.warning(f"decay engine start at boot failed: {_decay_exc}")
+                        # 裸机 + 本地向量化时，把 ollama 作为 OB 子进程拉起（常驻）。
+                        # Docker / 云端向量化下是 no-op。
+                        try:
+                            from web import ollama_local as _ollama_local
+                            await _ollama_local.ensure_child_on_boot()
+                        except Exception as _ol_exc:
+                            logger.warning(f"ollama child boot failed: {_ol_exc}")
                         yield
+                        try:
+                            await decay_engine.stop()
+                        except Exception:
+                            pass
+                        try:
+                            from web import ollama_local as _ollama_local
+                            await _ollama_local.stop_child()
+                        except Exception:
+                            pass
                         _stop_tunnel()
 
             _app.router.lifespan_context = _combined_lifespan

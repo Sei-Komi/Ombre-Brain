@@ -39,6 +39,31 @@ from starlette.responses import Response
 
 logger = logging.getLogger("ombre_brain")
 
+# --- 运行环境探测（Docker vs 裸机）---
+# 本地向量化要按宿主类型分流：Docker 里 ollama 是独立容器（连 ombre-ollama），
+# 裸机/原生则连本机 127.0.0.1。结果缓存一次，避免每次 IO。
+_in_docker_cache: "bool | None" = None
+
+
+def in_docker() -> bool:
+    """是否运行在 Docker 容器里。看 /.dockerenv 与 /proc/1/cgroup。结果缓存。"""
+    global _in_docker_cache
+    if _in_docker_cache is not None:
+        return _in_docker_cache
+    found = False
+    try:
+        if os.path.exists("/.dockerenv"):
+            found = True
+        else:
+            with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as f:
+                txt = f.read()
+            found = ("docker" in txt) or ("containerd" in txt) or ("kubepods" in txt)
+    except Exception:
+        found = False
+    _in_docker_cache = found
+    return found
+
+
 # --- 注入的运行期配置（server.py 启动时 init 进来）---
 config: dict = {}
 

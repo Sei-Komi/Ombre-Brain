@@ -57,10 +57,27 @@ _OLLAMA_MIRRORS = {
 _ollama_pull_state: dict = {"running": False, "model": "", "percent": 0, "status": "idle", "error": ""}
 _ollama_pull_task: "asyncio.Task | None" = None  # 持有引用防止被 GC
 
+# --- backfill（只补缺失向量，区别于 migrate 全库重算）---
+# 用途：v2.2 前建的桶（尤其 permanent）落盘时没走 create() 内置 _sync_embedding，
+# embeddings.db 里没有它们的行 → breath 语义检索查不到。migrate 能修但会重算全库、
+# 浪费 API 额度；backfill 只给「文件在、向量缺」的桶补一发，幂等、便宜。
+_backfill_state: dict = {
+    "running": False, "scanned": 0, "missing": 0, "done": 0,
+    "failed": 0, "status": "idle", "error": "",
+}
+_backfill_task: "asyncio.Task | None" = None  # 持有引用防止被 GC
+
 
 def _ollama_base() -> str:
-    """Ollama 管理 API 根地址（不带 /v1）。"""
-    raw = (os.environ.get("OMBRE_OLLAMA_URL", "") or "").strip() or _DEFAULT_OLLAMA_BASE
+    """Ollama 管理 API 根地址（不带 /v1）。
+
+    取值优先级：env OMBRE_OLLAMA_URL > 按宿主类型默认。
+    Docker 里默认连同网络的 ombre-ollama 容器；裸机/原生默认本机 127.0.0.1
+    （否则原生用户拉模型会去连一个不存在的容器名，静默失败）。
+    """
+    raw = (os.environ.get("OMBRE_OLLAMA_URL", "") or "").strip()
+    if not raw:
+        raw = _DEFAULT_OLLAMA_BASE if sh.in_docker() else "http://127.0.0.1:11434"
     return raw.rstrip("/").removesuffix("/v1").rstrip("/")
 
 
@@ -69,7 +86,8 @@ async def _ollama_pull_run(ollama_url: str, name: str) -> None:
     global _ollama_pull_state
     _ollama_pull_state = {"running": True, "model": name, "percent": 0, "status": "starting", "error": ""}
     try:
-        async with httpx.AsyncClient(timeout=None) as c:
+        # trust_env=False：本地/容器 ollama 不走系统代理（否则 Clash/V2Ray 开着会 502）
+        async with httpx.AsyncClient(timeout=None, trust_env=False) as c:
             async with c.stream("POST", f"{ollama_url}/api/pull", json={"name": name, "stream": True}) as r:
                 if r.status_code != 200:
                     raw = await r.aread()
@@ -100,6 +118,52 @@ async def _ollama_pull_run(ollama_url: str, name: str) -> None:
         _ollama_pull_state["running"] = False
     except Exception as e:
         _ollama_pull_state.update(running=False, status="error", error=str(e)[:200])
+
+
+async def _backfill_run() -> None:
+    """后台扫全库（含 archive），给缺向量的桶补 embedding，进度写 _backfill_state。
+
+    每补一条更新计数；失败只累加 failed、不中断（rule.md §1.5 允许降级）。
+    分批间小睡，照顾云端免费额度的速率限制。"""
+    import asyncio as _aio
+    global _backfill_state
+    engine = sh.embedding_engine
+    try:
+        all_buckets = await sh.bucket_mgr.list_all(include_archive=True)
+        _backfill_state["scanned"] = len(all_buckets)
+
+        # 先扫出缺向量的桶（空内容的跳过——没法向量化）
+        missing: list[tuple[str, str]] = []
+        for b in all_buckets:
+            content = b.get("content", "")
+            if not content or not content.strip():
+                continue
+            if await engine.get_embedding(b["id"]) is None:
+                missing.append((b["id"], content))
+        _backfill_state["missing"] = len(missing)
+        _backfill_state["status"] = "embedding"
+
+        for idx, (bid, content) in enumerate(missing):
+            try:
+                ok = await engine.generate_and_store(bid, content)
+                if ok:
+                    _backfill_state["done"] += 1
+                else:
+                    _backfill_state["failed"] += 1
+            except Exception as e:
+                _backfill_state["failed"] += 1
+                logger.warning(f"[backfill] embed failed for {bid}: {e}")
+            # 每 20 条小憩一下，避免打爆云端速率限制
+            if (idx + 1) % 20 == 0:
+                await _aio.sleep(2)
+
+        _backfill_state["status"] = "done"
+    except Exception as e:
+        _backfill_state["status"] = "error"
+        _backfill_state["error"] = str(e)[:200]
+        logger.error(f"[backfill] run failed: {e}")
+    finally:
+        _backfill_state["running"] = False
 
 
 def register(mcp) -> None:
@@ -350,6 +414,67 @@ def register(mcp) -> None:
         status = _mig_read_status(_mig_status_path_for(buckets_dir))
         return JSONResponse({"ok": True, "running": is_running(), "status": status})
 
+    @mcp.custom_route("/api/embedding/backfill", methods=["POST"])
+    async def api_embedding_backfill(request: Request) -> Response:
+        """补齐缺失向量：只给 embeddings.db 里没有行的桶生成 embedding。
+
+        与 /api/embedding/migrate 的区别：migrate 用（可能是新的）后端重算**全库**，
+        backfill 只扫出「文件在、向量缺」的桶补一发，不动已有向量，便宜且幂等。
+        典型场景：v2.2 前建的 permanent 桶让 breath 语义检索查不到。
+
+        成功启动返回 202 + {ok, status_path}；已有 backfill/migrate 在跑返回 409。
+        """
+        from starlette.responses import JSONResponse
+        global _backfill_task, _backfill_state
+        err = sh._require_auth(request)
+        if err:
+            return err
+
+        engine = sh.embedding_engine
+        if not engine or not getattr(engine, "enabled", False):
+            return JSONResponse({
+                "ok": False,
+                "error": "向量化未启用（缺 key / 本地模型未就绪），无法补齐。",
+            }, status_code=400)
+
+        # 与全库重算互斥：同时写 embeddings.db 会打架
+        try:
+            from migration_engine import is_running as _mig_running  # type: ignore
+        except ImportError:
+            try:
+                from .migration_engine import is_running as _mig_running  # type: ignore
+            except Exception:
+                _mig_running = lambda: False  # noqa: E731
+        if _mig_running():
+            return JSONResponse({
+                "ok": False,
+                "error": "全库重算正在进行，请等它完成再补齐。",
+            }, status_code=409)
+        if _backfill_state.get("running"):
+            return JSONResponse({
+                "ok": False, "error": "已有补齐任务在进行中。",
+            }, status_code=409)
+
+        import asyncio as _aio
+        _backfill_state = {
+            "running": True, "scanned": 0, "missing": 0, "done": 0,
+            "failed": 0, "status": "scanning", "error": "",
+        }
+        _backfill_task = _aio.create_task(_backfill_run())
+        return JSONResponse({
+            "ok": True,
+            "status_path": "/api/embedding/backfill/status",
+        }, status_code=202)
+
+    @mcp.custom_route("/api/embedding/backfill/status", methods=["GET"])
+    async def api_embedding_backfill_status(request: Request) -> Response:
+        """前端轮询：当前补齐任务进度。"""
+        from starlette.responses import JSONResponse
+        err = sh._require_auth(request)
+        if err:
+            return err
+        return JSONResponse({"ok": True, "backfill": _backfill_state})
+
     @mcp.custom_route("/api/embedding/local/status", methods=["GET"])
     async def api_embedding_local_status(request: Request) -> Response:
         """本地 ollama 是否可达 + 已有模型列表 + 目标模型是否就绪。"""
@@ -361,7 +486,7 @@ def register(mcp) -> None:
         base = _ollama_base()
         out = {"ok": True, "ollama_url": base, "reachable": False, "models": [], "has_model": False, "mirrors": list(_OLLAMA_MIRRORS.keys())}
         try:
-            async with httpx.AsyncClient(timeout=5.0) as c:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as c:
                 r = await c.get(f"{base}/api/tags")
                 r.raise_for_status()
                 names = [m.get("name", "") for m in r.json().get("models", [])]
@@ -394,7 +519,7 @@ def register(mcp) -> None:
         base = _ollama_base()
         # 可达性预检，避免后台任务静默失败
         try:
-            async with httpx.AsyncClient(timeout=5.0) as c:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as c:
                 vr = await c.get(f"{base}/api/version")
                 vr.raise_for_status()
         except Exception as e:

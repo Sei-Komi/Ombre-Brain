@@ -2386,6 +2386,14 @@
           </div>
           <button id="emb-migrate-btn" type="button" style="padding:6px 12px;">切换 / 重算所有 embedding…</button>
           <div id="emb-migrate-status" style="margin-top:8px;font-size:12px;line-height:1.6;color:var(--text);"></div>
+          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border,#ddd);">
+            <div style="font-size:12px;color:var(--text-light);margin-bottom:6px;">
+              只给「文件在、向量缺」的桶补一发（不动已有向量、不重算全库，省额度）。
+              老的 permanent / 钉选桶若搜不到，多半是缺向量，点这个补齐。
+            </div>
+            <button id="emb-backfill-btn" type="button" onclick="startBackfill()" style="padding:6px 12px;display:inline-flex;align-items:center;gap:6px;"><svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg> 补齐缺失向量</button>
+            <div id="emb-backfill-status" style="margin-top:8px;font-size:12px;line-height:1.6;color:var(--text);"></div>
+          </div>
         </div>
 
         <!-- 本地向量模型 (Ollama / bge-m3) -->
@@ -2394,19 +2402,33 @@
           <div style="font-size:11px;color:var(--text-light);line-height:1.6;margin-bottom:8px;">
             <svg class="icon" aria-hidden="true"><use href="#i-chip"></use></svg> 需约 <b>2–3GB 空闲内存</b>（模型常驻）+ 1.2GB 磁盘；纯 CPU 即可，首条查询约 1–9s（冷启动），之后 &lt;0.5s。低配机器（&lt;2GB 空闲内存）建议继续用云端向量化。
           </div>
+          <div id="local-emb-env" style="font-size:11px;color:var(--text-light);margin-bottom:6px;"></div>
           <div id="local-emb-status" style="font-size:12px;line-height:1.7;color:var(--text);margin-bottom:8px;">读取中…</div>
 
+          <div class="config-row" style="align-items:center;margin-bottom:8px;">
+            <label style="min-width:auto;">运行时镜像</label>
+            <select id="local-emb-binmirror" style="width:auto;">
+              <option value="official">官方源 ollama.com（默认）</option>
+              <option value="github">GitHub Releases</option>
+            </select>
+            <input type="text" id="local-emb-binmirror-custom" placeholder="或自定义前缀 URL（如 https://mymirror/ollama）" style="flex:1;margin-left:8px;" />
+          </div>
+
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <button type="button" class="btn-primary" onclick="oneClickLocal()" style="padding:7px 14px;display:inline-flex;align-items:center;gap:6px;"><svg class="icon" aria-hidden="true"><use href="#i-rocket"></use></svg> 一键搭建本地向量化（下载 + 切换）</button>
+            <button type="button" class="btn-primary" onclick="oneClickLocal()" style="padding:7px 14px;display:inline-flex;align-items:center;gap:6px;"><svg class="icon" aria-hidden="true"><use href="#i-rocket"></use></svg> 一键本地化（装 + 起 + 下模型 + 切换）</button>
             <button type="button" onclick="switchEmbedding('gemini')" title="切回云端" style="padding:7px 10px;"><i data-lucide="cloud"></i></button>
             <button type="button" onclick="loadLocalEmbStatus()" title="刷新状态" style="padding:7px 10px;"><i data-lucide="refresh-cw"></i></button>
           </div>
 
           <details style="margin-bottom:6px;">
-            <summary style="cursor:pointer;font-size:12px;color:var(--text-light);">分步操作 / 高级（下载镜像、单独下载或切换）</summary>
+            <summary style="cursor:pointer;font-size:12px;color:var(--text-light);">分步操作 / 高级（逐步：装运行时 → 启动 → 下模型 → 切换）</summary>
             <div style="padding-top:8px;">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+                <button type="button" onclick="installOllama()" title="按当前系统免提权安装 ollama 运行时" style="padding:6px 10px;"><i data-lucide="download-cloud"></i> 1·安装运行时</button>
+                <button type="button" onclick="startOllama()" title="把 ollama 作为 OB 子进程启动" style="padding:6px 10px;"><i data-lucide="play"></i> 2·启动</button>
+              </div>
               <div class="config-row" style="align-items:center;">
-                <label style="min-width:auto;">下载镜像</label>
+                <label style="min-width:auto;">模型镜像</label>
                 <select id="local-emb-mirror" style="width:auto;">
                   <option value="official">官方源（默认）</option>
                   <option value="modelscope">ModelScope（国内，需匹配模型名）</option>
@@ -2414,12 +2436,13 @@
                 <input type="text" id="local-emb-mirror-custom" placeholder="或自定义 registry 前缀，如 myhub.com/lib/" style="flex:1;margin-left:8px;" />
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-                <button type="button" onclick="pullLocalModel()" title="仅下载 bge-m3" style="padding:6px 10px;"><i data-lucide="download"></i> bge-m3</button>
-                <button type="button" onclick="switchEmbedding('ollama')" title="切换到本地并重算" style="padding:6px 10px;"><i data-lucide="cpu"></i> 切本地</button>
+                <button type="button" onclick="pullLocalModel()" title="仅下载 bge-m3" style="padding:6px 10px;"><i data-lucide="download"></i> 3·下载 bge-m3</button>
+                <button type="button" onclick="switchEmbedding('ollama')" title="切换到本地并重算" style="padding:6px 10px;"><i data-lucide="cpu"></i> 4·切本地</button>
               </div>
             </div>
           </details>
 
+          <div id="local-emb-install-status" style="margin-top:8px;font-size:12px;line-height:1.6;color:var(--text);"></div>
           <div id="local-emb-pull-status" style="margin-top:8px;font-size:12px;line-height:1.6;color:var(--text);"></div>
           <div id="local-emb-hint" style="margin-top:8px;font-size:11px;color:var(--text-light);line-height:1.6;"></div>
         </div>
@@ -2661,6 +2684,10 @@
         <button type="button" onclick="saveGithubConfig()" title="保存配置" style="padding:0 14px;height:36px;font-size:13px;display:inline-flex;align-items:center;gap:5px;"><i data-lucide="check"></i> 保存</button>
         <button type="button" onclick="validateGithub()" title="验证连接" style="padding:0 14px;height:36px;font-size:13px;display:inline-flex;align-items:center;gap:5px;"><i data-lucide="shield-check"></i> 验证</button>
         <button type="button" class="btn-primary" onclick="runGithubSync()" id="gh-sync-btn" title="立即同步" style="padding:0 14px;height:36px;font-size:13px;display:inline-flex;align-items:center;gap:5px;"><i data-lucide="upload-cloud"></i> 同步</button>
+        <button type="button" onclick="runGithubImport()" id="gh-import-btn" title="从 GitHub 拉回记忆（会覆盖本地同名记忆）" style="padding:0 14px;height:36px;font-size:13px;display:inline-flex;align-items:center;gap:5px;border:1px solid var(--accent,#b85c3c);color:var(--accent,#b85c3c);"><i data-lucide="download-cloud"></i> 从 GitHub 导入</button>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--accent,#b85c3c);line-height:1.6;">
+        ⚠️ 导入 = 把 GitHub 上的记忆拉回本地，<b>会覆盖同名记忆</b>（本地独有的保留）。导入前会自动存一份本地 zip 备份；导入后自动重建向量索引。一般用于换机/数据丢失后的恢复或回滚。
       </div>
 
       <div id="gh-msg" style="margin-top:12px;font-size:12px;min-height:18px;"></div>
@@ -5047,6 +5074,71 @@ function _startEmbMigratePolling() {
   _embMigratePollTimer = setInterval(pollEmbMigrateStatus, 3000);
 }
 
+// --- 补齐缺失向量（backfill）：只给缺向量的桶补一发，不重算全库 ---
+var _embBackfillPollTimer = null;
+function _renderBackfillStatus(s) {
+  var el = document.getElementById('emb-backfill-status');
+  if (!el) return;
+  if (!s || s.status === 'idle') { el.innerHTML = ''; return; }
+  var html = '';
+  if (s.status === 'scanning') {
+    html = '扫描全库，找缺向量的桶…';
+  } else if (s.status === 'embedding') {
+    var tot = s.missing || 0;
+    var pct = tot > 0 ? Math.floor(((s.done + s.failed) / tot) * 100) : 0;
+    html = '补齐中：<b>' + (s.done + s.failed) + ' / ' + tot + '</b> (' + pct + '%)'
+      + ' · 成功 ' + s.done + ' · 失败 ' + (s.failed || 0);
+  } else if (s.status === 'done') {
+    if ((s.missing || 0) === 0) {
+      html = '<b style="color:var(--positive,#2a8)">' + _SV.ok + ' 全部桶都有向量，无需补齐。</b>';
+    } else {
+      html = '<b style="color:var(--positive,#2a8)">' + _SV.ok + ' 完成：</b>扫描 ' + s.scanned
+        + ' · 缺失 ' + s.missing + ' · 补齐 ' + s.done
+        + (s.failed ? ' · <span style="color:var(--negative,#c33)">失败 ' + s.failed + '</span>' : '');
+    }
+  } else if (s.status === 'error') {
+    html = '<b style="color:var(--negative,#c33)">' + _SV.err + ' 出错：' + esc(s.error || '') + '</b>';
+  }
+  el.innerHTML = html;
+}
+
+async function pollBackfillStatus() {
+  try {
+    var r = await fetch(BASE + '/api/embedding/backfill/status');
+    var d = await readJsonSafe(r);
+    if (!d || !d.ok) return;
+    _renderBackfillStatus(d.backfill);
+    if (d.backfill && !d.backfill.running) {
+      if (_embBackfillPollTimer) { clearInterval(_embBackfillPollTimer); _embBackfillPollTimer = null; }
+      var btn = document.getElementById('emb-backfill-btn');
+      if (btn) btn.disabled = false;
+      refreshEmbInfo();
+    }
+  } catch (e) { /* ignore */ }
+}
+
+async function startBackfill() {
+  if (!confirm('补齐缺失向量：\n\n· 只给 embeddings.db 里没有的桶生成向量，不动已有向量\n· 比「重算全库」省额度，幂等，可反复点\n· 后台运行，期间可正常使用\n\n开始？')) return;
+  var st = document.getElementById('emb-backfill-status');
+  var btn = document.getElementById('emb-backfill-btn');
+  if (st) st.textContent = '启动中…';
+  try {
+    var r = await authFetch('/api/embedding/backfill', { method: 'POST' });
+    if (!r) return;
+    var d = await readJsonSafe(r);
+    if (r.status === 202 && d.ok) {
+      if (btn) btn.disabled = true;
+      if (_embBackfillPollTimer) return;
+      pollBackfillStatus();
+      _embBackfillPollTimer = setInterval(pollBackfillStatus, 2000);
+    } else {
+      if (st) st.innerHTML = '<b style="color:var(--negative,#c33)">启动失败：' + esc(d.error || ('HTTP ' + r.status)) + '</b>';
+    }
+  } catch (e) {
+    if (st) st.innerHTML = '<b style="color:var(--negative,#c33)">请求失败：' + esc(e.message || e) + '</b>';
+  }
+}
+
 document.addEventListener('click', function(e) {
   if (e.target && e.target.id === 'emb-migrate-btn') {
     var targetBackend = document.getElementById('cfg-emb-backend').value;
@@ -5085,6 +5177,18 @@ document.addEventListener('click', function(e) {
 async function loadLocalEmbStatus() {
   var el = document.getElementById('local-emb-status');
   if (!el) return;
+  // 1) 环境检测（os/arch/docker/已装/在跑）
+  var envD = null;
+  try { var er = await authFetch('/api/embedding/local/env'); if (er) envD = await readJsonSafe(er); } catch (e) {}
+  var envEl = document.getElementById('local-emb-env');
+  if (envEl && envD && envD.ok) {
+    var osName = ({windows:'Windows', linux:'Linux', macos:'macOS'})[envD.os] || envD.os;
+    envEl.innerHTML = '本机：<b>' + esc(osName) + ' / ' + esc(envD.arch) + '</b>'
+      + (envD.in_docker ? ' · <span style="color:var(--warning,#b89962)">Docker 容器</span>' : ' · 原生')
+      + ' · 运行时' + (envD.installed ? ('<span style="color:var(--positive,#7EAD68)">已装</span>') : '未装')
+      + ' · 服务' + (envD.running ? ('<span style="color:var(--positive,#7EAD68)">在跑</span>') : '未跑');
+  }
+  // 2) ollama 服务 + 模型状态
   try {
     var r = await authFetch('/api/embedding/local/status?model=bge-m3');
     if (!r) return;
@@ -5093,17 +5197,79 @@ async function loadLocalEmbStatus() {
     el.innerHTML =
       'Ollama 服务：' + (d.reachable ? '<b style="color:var(--positive,#7EAD68)">已连接</b>' : '<b style="color:var(--negative)">未连接</b>') +
       ' · <code>' + esc(d.ollama_url || '') + '</code><br>' +
-      'bge-m3 模型：' + (d.has_model ? '<b style="color:var(--positive,#7EAD68)">已就绪 ' + _SV.ok + '</b>' : '<b style="color:var(--warning,#b89962)">未下载（先点①）</b>') +
+      'bge-m3 模型：' + (d.has_model ? '<b style="color:var(--positive,#7EAD68)">已就绪 ' + _SV.ok + '</b>' : '<b style="color:var(--warning,#b89962)">未下载</b>') +
       (d.models && d.models.length ? '<br><span style="color:var(--text-light)">已装：' + d.models.map(esc).join(', ') + '</span>' : '');
     var hint = document.getElementById('local-emb-hint');
     if (hint) {
-      if (!d.reachable) hint.innerHTML = _SV.warn + ' 未检测到 ollama。VPS 上应有常驻 <code>ombre-ollama</code> 容器；本机自建：<code>docker run -d --name ombre-ollama --restart unless-stopped -v ollama:/root/.ollama ollama/ollama</code> 并与 OB 同网络。';
+      if (envD && envD.in_docker) hint.innerHTML = _SV.warn + ' Docker 部署：用 compose 的 ollama 服务 <code>docker compose -f deploy/docker-compose.yml up -d ollama</code>（容器内无法给宿主装运行时）。';
+      else if (!d.reachable && envD && !envD.installed) hint.innerHTML = _SV.info + ' 还没装本地运行时。点「一键本地化」或「1·安装运行时」自动装（免管理员 / sudo）。';
+      else if (!d.reachable) hint.innerHTML = _SV.info + ' 运行时已装但没在跑，点「2·启动」。';
       else hint.textContent = '提示：切换云端↔本地会全库重算（Gemini 3072 维 ↔ bge-m3 1024 维不通用），重算期间检索暂用旧库，不影响使用。';
     }
     if (d.pull && d.pull.running) { _renderLocalPull(d.pull); _startLocalPullPolling(); }
   } catch (e) {
     el.textContent = '状态读取失败：' + (e.message || e);
   }
+}
+
+// ---- 本地运行时：安装 / 启动 ----
+function _binMirror() {
+  var sel = (document.getElementById('local-emb-binmirror') || {}).value || 'official';
+  var custom = ((document.getElementById('local-emb-binmirror-custom') || {}).value || '').trim();
+  return custom || sel;
+}
+var _installTimer = null;
+function _renderInstall(s) {
+  var el = document.getElementById('local-emb-install-status');
+  if (!el || !s) return;
+  if (s.phase === 'idle') { el.textContent = ''; return; }
+  if (s.phase === 'error') {
+    el.innerHTML = '<b style="color:var(--negative)">' + _SV.err + ' 安装失败：' + esc(s.error || '') + '</b>'
+      + (s.hint ? '<br><span style="color:var(--text-light)">' + esc(s.hint) + '</span>' : '');
+    return;
+  }
+  if (s.phase === 'done') { el.innerHTML = '<b style="color:var(--positive,#7EAD68)">' + _SV.ok + ' 运行时安装完成</b>'; return; }
+  var ph = ({ starting:'准备', downloading:'下载中', installing:'安装中', extracting:'解压中' })[s.phase] || s.phase;
+  el.innerHTML = ph + (s.percent ? ' · ' + s.percent + '%' : '') + (s.msg ? ' · ' + esc(s.msg) : '');
+}
+async function _installAndWait() {
+  var el = document.getElementById('local-emb-install-status');
+  if (el) el.textContent = '启动安装…';
+  var r = await authFetch('/api/embedding/local/install', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ mirror: _binMirror() }) });
+  if (!r) return { ok:false };
+  var d = await readJsonSafe(r);
+  if (d.already) { if (el) el.innerHTML = '<b style="color:var(--positive,#7EAD68)">' + _SV.ok + ' 运行时已安装</b>'; return { ok:true }; }
+  if (!(r.status === 202 && d.ok)) { if (el) el.innerHTML = '<b style="color:var(--negative)">' + _SV.err + ' ' + esc(d.error || ('HTTP ' + r.status)) + '</b>'; return { ok:false, error:d.error }; }
+  return await new Promise(function (resolve) {
+    if (_installTimer) clearInterval(_installTimer);
+    _installTimer = setInterval(async function () {
+      try {
+        var sr = await authFetch('/api/embedding/local/install/status');
+        if (!sr) return;
+        var sd = await readJsonSafe(sr);
+        if (!sd.ok) return;
+        _renderInstall(sd.install);
+        if (sd.install && !sd.install.running) {
+          clearInterval(_installTimer); _installTimer = null;
+          loadLocalEmbStatus();
+          resolve({ ok: sd.install.phase === 'done', error: sd.install.error });
+        }
+      } catch (e) { /* keep waiting */ }
+    }, 1500);
+  });
+}
+async function installOllama() { await _installAndWait(); }
+async function startOllama() {
+  var el = document.getElementById('local-emb-install-status');
+  if (el) el.textContent = '启动 ollama…';
+  try {
+    var r = await authFetch('/api/embedding/local/start', { method:'POST' });
+    if (!r) return false;
+    var d = await readJsonSafe(r);
+    if (d.ok) { if (el) el.innerHTML = '<b style="color:var(--positive,#7EAD68)">' + _SV.ok + ' ollama 已在跑</b>'; loadLocalEmbStatus(); return true; }
+    if (el) el.innerHTML = '<b style="color:var(--negative)">' + _SV.err + ' ' + esc(d.error || '启动失败') + '</b>';
+    return false;
+  } catch (e) { if (el) el.innerHTML = '<b style="color:var(--negative)">' + _SV.err + ' ' + esc(e.message || e) + '</b>'; return false; }
 }
 
 var _localPullTimer = null;
@@ -5180,24 +5346,40 @@ async function switchEmbedding(mode, skipConfirm) {
   }
 }
 
-// 一键搭建：检查 ollama → 缺模型则下载并等待 → 切换到本地并重算
+// 一键本地化：检测系统 → 装运行时（免提权）→ 起子进程 → 下模型 → 切本地重算
 async function oneClickLocal() {
-  if (!confirm('一键搭建本地向量化（bge-m3）：\n\n· 需要约 2–3GB 空闲内存 + 1.2GB 磁盘\n· 下载模型（约 1.2GB）→ 自动切换 → 全库重算向量\n· 全程后台进行，期间可正常使用（检索暂用旧库）\n· 之后可随时切回云端向量化\n\n开始？')) return;
-  var r = await authFetch('/api/embedding/local/status?model=bge-m3');
-  if (!r) return;
-  var d;
-  try { d = await readJsonSafe(r); } catch (e) { alert('读取本地状态失败：' + (e.message || e)); return; }
-  if (!d.ok || !d.reachable) {
-    alert('未检测到 Ollama 服务。\n\n请先启动 ollama 容器（与 OB 同一 docker 网络）：\n\n  docker run -d --name ombre-ollama --restart unless-stopped \\\n    -v ollama:/root/.ollama ollama/ollama\n\n或在 deploy/docker-compose.yml 里启用 ollama 服务后：docker compose up -d ollama\n\n启动后再点本按钮。');
+  var er = await authFetch('/api/embedding/local/env');
+  if (!er) return;
+  var env = await readJsonSafe(er);
+  if (!env || !env.ok) { alert('环境检测失败，请稍后重试。'); return; }
+  if (env.in_docker) {
+    alert('检测到 OB 运行在 Docker 容器里。\n\n本地向量化请用 compose 里的 ollama 服务（容器内无法给宿主装运行时）：\n\n  docker compose -f deploy/docker-compose.yml up -d ollama\n\n起好后回来点「切本地」。');
     return;
   }
-  if (!d.has_model) {
+  var osName = ({ windows:'Windows', linux:'Linux', macos:'macOS' })[env.os] || env.os;
+  if (!confirm('一键本地化（检测到：' + osName + ' / ' + env.arch + '）：\n\n· 自动安装 Ollama 运行时（免管理员 / sudo；Win/Linux 约 1.4GB，含 GPU 库）\n· 作为 OB 子进程常驻（OB 在它就在）\n· 下载 bge-m3 模型（约 1.2GB，需 2–3GB 空闲内存）\n· 切到本地并全库重算（期间可正常用）\n\n首次合计需下载约 2–3GB，请确保磁盘/网络够。开始？')) return;
+
+  // 1) 安装运行时
+  if (!env.installed) {
+    var ins = await _installAndWait();
+    if (!ins.ok) { alert('运行时安装未完成，已停在这一步。\n可在「运行时镜像」换成 GitHub 源重试，或按下方提示手动安装后再点一次。'); return; }
+  }
+  // 2) 启动（子进程常驻）
+  if (!env.running) {
+    var started = await startOllama();
+    if (!started) { alert('Ollama 启动失败，已停在这一步。'); return; }
+  }
+  // 3) 缺模型则下载
+  var sr = await authFetch('/api/embedding/local/status?model=bge-m3');
+  var sd = sr ? await readJsonSafe(sr) : null;
+  if (!sd || !sd.has_model) {
     var pmsg = document.getElementById('local-emb-pull-status');
     if (pmsg) pmsg.textContent = '开始下载 bge-m3（约 1.2GB）…';
     await pullLocalModel();
     var ok = await _waitLocalPull();
-    if (!ok) { alert('模型下载未成功，已中止（未改动现有向量）。可在「分步操作」里换个下载镜像重试。'); return; }
+    if (!ok) { alert('模型下载未成功，已中止（未改动现有向量）。可在「模型镜像」换 ModelScope 重试。'); return; }
   }
+  // 4) 切到本地并重算
   await switchEmbedding('ollama', true);
 }
 // 等待拉取完成；true=成功
@@ -5315,6 +5497,54 @@ async function runGithubSync() {
     }
   } catch(e) { msg.innerHTML = _SV.err + ' ' + esc(e.message || '网络错误'); msg.style.color = 'var(--negative)'; }
   btn.disabled = false; btn.textContent = '立即同步 ↑';
+}
+
+// 从 GitHub 导入/恢复（会覆盖本地同名记忆）→ 导入后自动重建向量
+async function runGithubImport() {
+  var msg = document.getElementById('gh-msg');
+  var btn = document.getElementById('gh-import-btn');
+  if (!confirm('⚠️ 从 GitHub 导入记忆\n\n会用 GitHub 仓库里的记忆覆盖本地【同名】记忆（本地独有的保留）。\n导入前会自动存一份本地 zip 备份，导入后自动重建向量索引。\n\n常用于换机/数据丢失后的恢复或回滚。确定导入？')) return;
+  if (btn) { btn.disabled = true; }
+  msg.textContent = '正在从 GitHub 拉回记忆…（导入前已自动备份本地）'; msg.style.color = '';
+  try {
+    var res = await authFetch('/api/github/import', { method: 'POST' });
+    var d = await readJsonSafe(res);
+    if (d.ok) {
+      var extra = (d.skipped ? '，跳过 ' + d.skipped : '') + (d.truncated ? '（⚠️ 仓库文件过多被截断，部分未导入）' : '');
+      msg.innerHTML = _SV.ok + ' 导入完成：恢复 ' + (d.imported||0) + ' 条记忆' + extra
+        + (d.pre_import_backup ? '<br><span style="color:var(--text-light)">本地备份：<code>' + esc(d.pre_import_backup) + '</code></span>' : '');
+      msg.style.color = 'var(--success, green)';
+      // 导入后自动重建向量（恢复的桶 embeddings.db 里还没有）
+      if (typeof startBackfill === 'function') {
+        msg.innerHTML += '<br>正在为恢复的记忆重建向量索引…';
+        try { await _runBackfillSilent(); msg.innerHTML += ' ' + _SV.ok; } catch(e){}
+      }
+      await loadGithubStatus();
+      if (typeof loadStatus === 'function') loadStatus();
+    } else {
+      msg.innerHTML = _SV.err + ' ' + esc(d.error || '导入失败');
+      msg.style.color = 'var(--accent)';
+    }
+  } catch(e) { msg.innerHTML = _SV.err + ' ' + esc(e.message || '网络错误'); msg.style.color = 'var(--negative)'; }
+  if (btn) { btn.disabled = false; }
+}
+// 静默跑一次 backfill 并等完成（导入后重建向量用）
+async function _runBackfillSilent() {
+  var r = await authFetch('/api/embedding/backfill', { method: 'POST' });
+  if (!r) return;
+  var d = await readJsonSafe(r);
+  if (!(r.status === 202 && d.ok)) return;
+  await new Promise(function (resolve) {
+    var iv = setInterval(async function () {
+      try {
+        var sr = await authFetch('/api/embedding/backfill/status');
+        if (!sr) return;
+        var sd = await readJsonSafe(sr);
+        if (sd && sd.backfill && !sd.backfill.running) { clearInterval(iv); resolve(); }
+      } catch (e) {}
+    }, 1500);
+    setTimeout(function () { clearInterval(iv); resolve(); }, 180000);
+  });
 }
 
 async function loadConfig() {
@@ -5915,7 +6145,34 @@ window.addEventListener('DOMContentLoaded', function() {
   }
   updateChick(0);              // 小黄鸡蛋初始（loadBuckets 后会按真实总数更新）
   startPlaceholderRotation();  // 搜索框随机 placeholder
+  checkEmptyMemoryBanner();    // 零记忆时红色提示「可从 GitHub 恢复」
 });
+
+// 更新/换机后发现一条记忆都没有 → 顶部红色横幅，引导从 GitHub 恢复。
+// 只在确实零记忆且已配置 GitHub 时出现；导入按钮平时仍在设置里随时可用。
+async function checkEmptyMemoryBanner() {
+  try {
+    var sr = await authFetch('/api/status');
+    if (!sr) return;
+    var s = await sr.json();
+    var b = s.buckets || {};
+    var live = (b.permanent || 0) + (b.dynamic || 0);
+    if (live > 0) { var ex = document.getElementById('empty-mem-banner'); if (ex) ex.remove(); return; }
+    // 是否配置了 GitHub（有才提恢复）
+    var ghOk = false;
+    try { var gr = await authFetch('/api/github/status'); if (gr) { var gd = await gr.json(); ghOk = !!(gd && (gd.configured || gd.token_set)); } } catch (e) {}
+    if (document.getElementById('empty-mem-banner')) return;
+    var bar = document.createElement('div');
+    bar.id = 'empty-mem-banner';
+    bar.style.cssText = 'position:sticky;top:0;z-index:9999;background:#b85c3c;color:#fff;padding:10px 16px;font-size:13px;line-height:1.6;display:flex;align-items:center;gap:12px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.25);';
+    bar.innerHTML = '<b>⚠️ 检测到当前没有任何记忆</b>'
+      + (ghOk
+          ? '<span>可从 GitHub 备份恢复（会写入本地，导入前自动备份）。</span><button onclick="runGithubImport()" style="background:#fff;color:#b85c3c;border:none;border-radius:4px;padding:5px 14px;font-size:12px;font-weight:600;cursor:pointer;">从 GitHub 恢复记忆</button>'
+          : '<span>若你在 GitHub 备份过记忆，去「⑦ GitHub 同步」填好配置后即可一键恢复。</span>')
+      + '<button onclick="this.parentNode.remove()" style="margin-left:auto;background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);border-radius:4px;padding:4px 10px;font-size:12px;cursor:pointer;">忽略</button>';
+    document.body.insertBefore(bar, document.body.firstChild);
+  } catch (e) { /* ignore */ }
+}
 window.addEventListener('load', function() {
   if (window.lucide) lucide.createIcons();
   // iter 1.7 §D: auto-render any dynamically-inserted [data-lucide] icons

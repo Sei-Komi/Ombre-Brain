@@ -83,6 +83,84 @@ class GitHubSync:
             logger.error(f"[github_sync] sync failed: {e}")
             return {"ok": False, "error": str(e)}
 
+    async def import_from_github(self, buckets_dir: str) -> dict[str, Any]:
+        """从 GitHub 仓库把 path_prefix 下的所有 .md 拉回本地 buckets_dir（恢复 / 回滚）。
+
+        这是 sync() 的逆操作。合并覆盖语义：同名（同相对路径）文件用 GitHub 上的覆盖，
+        本地独有的文件保留不动。embeddings.db 不在仓库里，调用方应在导入后跑一次
+        backfill 重建向量。带 path-traversal 防护（仓库内容不可信，防 ../ 逃逸）。
+        """
+        try:
+            async with httpx.AsyncClient(headers=self._headers, timeout=_TIMEOUT) as c:
+                # 取 branch HEAD → commit tree → 递归列出全部 blob
+                r = await self._request(c, "GET", f"{_API}/repos/{self.repo}/git/ref/heads/{self.branch}")
+                if r.status_code == 404:
+                    return {"ok": False, "error": f"分支 {self.branch} 不存在"}
+                r.raise_for_status()
+                head_sha = r.json()["object"]["sha"]
+                r = await self._request(c, "GET", f"{_API}/repos/{self.repo}/git/commits/{head_sha}")
+                r.raise_for_status()
+                tree_sha = r.json()["tree"]["sha"]
+                r = await self._request(c, "GET", f"{_API}/repos/{self.repo}/git/trees/{tree_sha}?recursive=1")
+                r.raise_for_status()
+                tj = r.json()
+                tree = tj.get("tree", [])
+                truncated = bool(tj.get("truncated"))
+
+                prefix = (self.path_prefix + "/") if self.path_prefix else ""
+                targets = [
+                    t for t in tree
+                    if t.get("type") == "blob" and t.get("path", "").startswith(prefix)
+                    and t["path"].endswith(".md")
+                ]
+                if not targets:
+                    return {"ok": True, "imported": 0, "skipped": 0,
+                            "message": f"GitHub 仓库 {self.repo} 的 {prefix or '/'} 下没有 .md 记忆文件"}
+
+                base = os.path.abspath(buckets_dir)
+                imported = 0
+                skipped = 0
+                errors: list[str] = []
+                for t in targets:
+                    rel = t["path"][len(prefix):]
+                    if not rel:
+                        continue
+                    # path-traversal 防护：解析后必须仍在 buckets_dir 内
+                    dest = os.path.abspath(os.path.join(base, rel))
+                    if dest != base and not dest.startswith(base + os.sep):
+                        skipped += 1
+                        errors.append(f"{rel}: 越界路径，已跳过")
+                        continue
+                    try:
+                        rb = await self._request(c, "GET", f"{_API}/repos/{self.repo}/git/blobs/{t['sha']}")
+                        rb.raise_for_status()
+                        bj = rb.json()
+                        if bj.get("encoding") == "base64":
+                            data = base64.b64decode(bj.get("content", ""))
+                        else:
+                            data = (bj.get("content", "") or "").encode("utf-8")
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        with open(dest, "wb") as f:
+                            f.write(data)
+                        imported += 1
+                    except Exception as e:
+                        skipped += 1
+                        errors.append(f"{rel}: {e}")
+
+                self.last_sync = _now_iso()
+                self.last_status = "ok"
+                return {
+                    "ok": True,
+                    "imported": imported,
+                    "skipped": skipped,
+                    "total": len(targets),
+                    "truncated": truncated,
+                    "errors": errors[:10],
+                }
+        except Exception as e:
+            logger.error(f"[github_sync] import failed: {e}")
+            return {"ok": False, "error": str(e)}
+
     async def validate(self) -> dict[str, Any]:
         """验证 token + repo 可访问，且具有写权限（contents: write）。"""
         try:

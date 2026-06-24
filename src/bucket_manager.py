@@ -117,6 +117,7 @@ _RIPPLE_BOOST = 0.3        # 唤醒时 activation_count 增量
 # --- search 评分 ---
 _VECTOR_TOPK = 50          # embedding 预取 top_k（仅作 semantic 分源，不窄化候选集）
 _RESOLVED_RANK_PENALTY = 0.3   # resolved 桶仅在排序时降权
+_LITERAL_MATCH_BONUS = 25.0    # 查询串原样命中 name/tags/domain/正文时的召回加分（修短查询召回）
 
 # --- _calc_topic_score 文本维度权重 ---
 _TOPIC_NAME_W = 3.0
@@ -843,6 +844,8 @@ class BucketManager:
             return []
 
         limit = limit or self.max_results
+        # 字面召回：把查询原样（小写、去空白）留作子串匹配，保证显式搜的词必被召回
+        q_norm = query.strip().lower()
         all_buckets = await self.list_all(include_archive=False)
 
         if not all_buckets:
@@ -892,6 +895,17 @@ class BucketManager:
             meta = bucket.get("metadata", {})
 
             try:
+                # 字面命中：查询串原样出现在 name/tags/domain/正文 → 召回保障 + 排序加分
+                literal_hit = False
+                if q_norm:
+                    hay = " ".join([
+                        str(meta.get("name", "")),
+                        " ".join(str(t) for t in (meta.get("tags") or [])),
+                        " ".join(str(d) for d in (meta.get("domain") or [])),
+                        bucket.get("content", "") or "",
+                    ]).lower()
+                    literal_hit = q_norm in hay
+
                 # Dim 1: topic relevance (fuzzy text, 0~1)
                 topic_score = self._calc_topic_score(query, bucket)
 
@@ -934,10 +948,16 @@ class BucketManager:
                 # Normalize to 0~100 for readability
                 normalized = (total / weight_sum) * 100 if weight_sum > 0 else 0
 
+                # 字面命中加分 + 召回保障：修复短查询（如 2 字"杭州"）即使正文里有也
+                # 因加权分被各维度稀释到 fuzzy_threshold 以下而整条搜不到。
+                # 用户显式搜的词必须召回，故 literal_hit 直接放行（OR），并给排序加分。
+                if literal_hit:
+                    normalized = min(100.0, normalized + _LITERAL_MATCH_BONUS)
+
                 # Threshold check uses raw (pre-penalty) score so resolved buckets
                 # 阈值用原始分数判定，确保 resolved 桶在关键词命中时仍可被搜出
                 # remain reachable by keyword (penalty applied only to ranking).
-                if normalized >= self.fuzzy_threshold:
+                if normalized >= self.fuzzy_threshold or literal_hit:
                     # Resolved buckets get ranking penalty (but still reachable by keyword)
                     # 已解决的桶仅在排序时降权
                     if meta.get("resolved", False):

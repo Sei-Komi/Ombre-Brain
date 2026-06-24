@@ -14,6 +14,8 @@ _github_sync_loop / _restart_github_auto_task 也读 sh.github_sync_instance，
 """
 
 import os
+import time
+import zipfile
 import yaml
 
 from starlette.requests import Request
@@ -27,6 +29,28 @@ try:
     from github_sync import GitHubSync  # type: ignore
 except ImportError:  # pragma: no cover
     from ..github_sync import GitHubSync  # type: ignore
+
+
+def _pre_import_backup(buckets_dir: str) -> str:
+    """导入前把当前所有 .md 打成 zip 存到 <buckets_dir>/.import_backups/。
+    返回 zip 路径（失败返回 "" —— 备份失败不应阻断恢复，但会在结果里如实标注）。"""
+    try:
+        bdir = os.path.join(buckets_dir, ".import_backups")
+        os.makedirs(bdir, exist_ok=True)
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        zpath = os.path.join(bdir, f"pre_import_{ts}.zip")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            for root, _, files in os.walk(buckets_dir):
+                if os.path.basename(root) == ".import_backups":
+                    continue
+                for fn in files:
+                    if fn.endswith(".md"):
+                        full = os.path.join(root, fn)
+                        z.write(full, os.path.relpath(full, buckets_dir))
+        return zpath
+    except Exception as e:
+        logger.warning(f"[github] pre-import backup failed: {e}")
+        return ""
 
 
 def register(mcp) -> None:
@@ -135,4 +159,33 @@ def register(mcp) -> None:
         if not buckets_dir:
             return JSONResponse({"ok": False, "error": "buckets_dir 未配置"}, status_code=500)
         result = await sh.github_sync_instance.sync(buckets_dir)
+        return JSONResponse(result)
+
+    @mcp.custom_route("/api/github/import", methods=["POST"])
+    async def api_github_import(request: Request) -> Response:
+        """从 GitHub 拉回记忆（恢复 / 回滚）。⚠️ 会覆盖本地同名记忆。
+
+        合并覆盖语义 + 导入前自动 zip 备份本地（可退回）。导入后建议跑 backfill 重建
+        向量（前端会自动接着调 /api/embedding/backfill）。embeddings.db 不在仓库里。
+        """
+        from starlette.responses import JSONResponse
+        err = sh._require_auth(request)
+        if err:
+            return err
+        if sh.github_sync_instance is None:
+            return JSONResponse({"ok": False, "error": "尚未配置 GitHub 同步，请先填写配置并保存"}, status_code=400)
+        buckets_dir = sh.config.get("buckets_dir", "")
+        if not buckets_dir:
+            return JSONResponse({"ok": False, "error": "buckets_dir 未配置"}, status_code=500)
+        # 1) 导入前自动备份本地（合并覆盖会改动本地，留个后悔药）
+        backup = _pre_import_backup(buckets_dir)
+        # 2) 从 GitHub 拉回
+        result = await sh.github_sync_instance.import_from_github(buckets_dir)
+        result["pre_import_backup"] = backup
+        # 3) 让 bucket_mgr 的 BM25 索引失效（导入直写磁盘，绕过了 bucket_mgr 的脏标记）
+        try:
+            if sh.bucket_mgr is not None:
+                sh.bucket_mgr._invalidate_bm25()
+        except Exception:
+            pass
         return JSONResponse(result)

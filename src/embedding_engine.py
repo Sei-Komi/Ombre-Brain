@@ -41,6 +41,7 @@ import os
 import sqlite3
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 
 logger = logging.getLogger("ombre_brain.embedding")
@@ -116,10 +117,18 @@ class APIEmbeddingEngine(BaseEmbeddingEngine):
             model = f"models/{model}"
         self.model = model
         self._dim = dim
+        # 本地/容器 ollama 必须绕过系统代理。httpx 默认 trust_env=True 会读
+        # 环境变量「以及 Windows 注册表/WinINET 系统代理」，于是 Clash/V2Ray 等
+        # 一开，127.0.0.1:11434 也被丢给代理 → 502 空响应，本地向量化整条挂掉
+        # （现网 Docker 没代理所以没暴露，但裸机用户极常见）。
+        # 判定本地：base_url 指向 localhost / 127.0.0.1 / ollama 容器名 → trust_env=False。
+        # 云端（Gemini / 硅基流动等）保持 trust_env=True，国内往往正需要代理才能到。
+        _host = base_url or ""
+        _is_local_host = any(h in _host for h in ("127.0.0.1", "localhost", "ombre-ollama", "[::1]"))
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
-            timeout=30.0,
+            http_client=httpx.AsyncClient(timeout=30.0, trust_env=not _is_local_host),
         )
 
     def model_name(self) -> str:
@@ -298,11 +307,18 @@ class EmbeddingEngine:
             return
 
         if is_local:
-            # 本地 Ollama：OpenAI 兼容 /v1/embeddings；默认连同网络下的 ombre-ollama 容器
+            # 本地 Ollama：OpenAI 兼容 /v1/embeddings。
+            # 默认地址按宿主分流：Docker 里连同网络的 ombre-ollama 容器；
+            # 裸机/原生连本机 127.0.0.1（否则原生用户切到本地会去连不存在的容器名）。
+            _local_default = (
+                "http://ombre-ollama:11434/v1"
+                if os.path.exists("/.dockerenv")
+                else "http://127.0.0.1:11434/v1"
+            )
             base_url = (
                 (embed_cfg.get("base_url") or "").strip()
                 or os.environ.get("OMBRE_OLLAMA_URL", "").strip()
-                or "http://ombre-ollama:11434/v1"
+                or _local_default
             )
             model = embed_cfg.get("model") or "bge-m3"
             # bge-m3 = 1024 维；APIEmbeddingEngine 拿到第一颗向量后还会自校正，这里给正确默认值
