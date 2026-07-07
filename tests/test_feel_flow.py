@@ -19,6 +19,25 @@ import pytest_asyncio
 # Feel flow tests use direct BucketManager calls, no LLM needed.
 
 
+class _FakeEmbeddingEngine:
+    """embedding 现在是 create()/update(content=...) 的强制依赖；这里的
+    测试不验证 embedding 本身，给一个永远成功的假引擎。"""
+
+    enabled = True
+
+    async def generate_and_store(self, bucket_id, content):
+        return True
+
+    def delete_embedding(self, bucket_id):
+        pass
+
+    async def get_embedding(self, bucket_id):
+        return [0.1, 0.2, 0.3]
+
+    async def search_similar(self, query, top_k=10):
+        return []
+
+
 @pytest_asyncio.fixture
 async def isolated_tools(test_config, tmp_path, monkeypatch):
     """
@@ -51,7 +70,7 @@ async def isolated_tools(test_config, tmp_path, monkeypatch):
     from decay_engine import DecayEngine
     from dehydrator import Dehydrator
 
-    bm = BucketManager(test_config | {"buckets_dir": bd})
+    bm = BucketManager(test_config | {"buckets_dir": bd}, embedding_engine=_FakeEmbeddingEngine())
     dh = Dehydrator(test_config)
     de = DecayEngine(test_config, bm)
 
