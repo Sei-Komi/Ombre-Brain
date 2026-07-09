@@ -737,6 +737,11 @@ def register(mcp) -> None:
                             sh.import_engine.embedding_engine = sh.embedding_engine  # type: ignore[attr-defined]
                         except Exception:
                             pass
+                        try:
+                            from tools import _runtime as _rt_hot
+                            _rt_hot.embedding_engine = sh.embedding_engine
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
