@@ -65,4 +65,4 @@ ENV OMBRE_EMBED_BACKEND=api
 
 EXPOSE 8000
 
-ENTRYPOINT ["./entrypoint.sh"]
+CMD ["./entrypoint.sh"]
