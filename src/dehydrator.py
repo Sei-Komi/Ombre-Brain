@@ -466,9 +466,61 @@ class Dehydrator:
             max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
             temperature=temperature if temperature is not None else self.temperature,
         )
-        if not response.choices:
+        content = ""
+        if response.choices:
+            content = response.choices[0].message.content or ""
+        if content:
+            return content
+        # openai library returned empty — retry with raw httpx as fallback
+        logger.warning("openai client returned empty content, retrying with raw httpx")
+        return await self._chat_httpx_fallback(
+            system, user,
+            max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
+            temperature=temperature if temperature is not None else self.temperature,
+        )
+
+    async def _chat_httpx_fallback(
+        self,
+        system: str,
+        user: str,
+        *,
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
+    ) -> str:
+        """Direct httpx POST fallback when the openai library returns empty content."""
+        import httpx
+        base = self.base_url.rstrip("/")
+        # Ensure we get .../chat/completions regardless of whether base_url ends with /v1
+        if base.endswith("/chat/completions"):
+            url = base
+        elif base.endswith("/v1") or base.endswith("/v1beta"):
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+        choices = data.get("choices", [])
+        if not choices:
+            logger.error("httpx fallback also returned no choices")
             return ""
-        return response.choices[0].message.content or ""
+        content = (choices[0].get("message") or {}).get("content") or ""
+        if content:
+            logger.info(f"httpx fallback succeeded, got {len(content)} chars")
+        else:
+            logger.error("httpx fallback returned empty content")
+        return content
 
     async def _chat_gemini(
         self,
