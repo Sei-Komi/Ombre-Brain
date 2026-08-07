@@ -294,7 +294,7 @@ def register(mcp) -> None:
                 if not b:
                     missing_ids.append(bid)
                     continue
-                await sh.bucket_mgr.update(bid, dont_surface=target)
+                await sh.bucket_mgr.update(bid, _skip_touch=True, dont_surface=target)
                 ok_ids.append(bid)
             except Exception as e:
                 errors.append({"id": bid, "error": str(e)})

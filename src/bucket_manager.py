@@ -549,10 +549,14 @@ class BucketManager:
     # 更新桶
     # Supports: content, tags, importance, valence, arousal, name, resolved
     # ---------------------------------------------------------
-    async def update(self, bucket_id: str, **kwargs) -> bool:
+    async def update(self, bucket_id: str, _skip_touch: bool = False, **kwargs) -> bool:
         """
         Update bucket content or metadata fields.
         更新桶的内容或元数据字段。
+
+        _skip_touch: if True, do NOT refresh last_active timestamp.
+        Used by decay engine auto-resolve to avoid mass-updating timestamps.
+        _skip_touch: 为 True 时不刷新 last_active，防止批量操作污染时间戳。
         """
         file_path = self._find_bucket_file(bucket_id)
         if not file_path:
@@ -661,7 +665,10 @@ class BucketManager:
                         post[k] = kwargs[k]
 
         # --- Auto-refresh activation time / 自动刷新激活时间 ---
-        post["last_active"] = now_iso()
+        # Skip when caller explicitly opts out (e.g. decay auto-resolve).
+        # 调用方显式跳过时不刷新（如衰减引擎自动结案）。
+        if not _skip_touch:
+            post["last_active"] = now_iso()
 
         try:
             with open(file_path, "w", encoding="utf-8") as f:

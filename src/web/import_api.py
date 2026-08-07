@@ -261,7 +261,7 @@ def register(mcp) -> None:
                         errors += 1
                         continue
                 elif action == "noise":
-                    await sh.bucket_mgr.update(bid, resolved=True, importance=1)
+                    await sh.bucket_mgr.update(bid, _skip_touch=True, resolved=True, importance=1)
                 elif action == "delete":
                     await sh.bucket_mgr.delete(bid)
                 applied += 1

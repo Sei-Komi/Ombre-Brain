@@ -316,7 +316,7 @@ class DecayEngine:
                 )
                 if imp <= _AUTO_RESOLVE_IMPORTANCE_MAX and days_since > _AUTO_RESOLVE_DAYS_MIN:
                     try:
-                        await self.bucket_mgr.update(bucket["id"], resolved=True)
+                        await self.bucket_mgr.update(bucket["id"], _skip_touch=True, resolved=True)
                         meta["resolved"] = True  # refresh local meta so resolved_factor applies this cycle
                         auto_resolved += 1
                         logger.info(
