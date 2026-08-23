@@ -586,7 +586,11 @@ class BucketManager:
 
         # --- Update only fields that were passed in / 只改传入的字段 ---
         if "content" in kwargs:
-            post.content = kwargs["content"]  # wikilink injection disabled; LLM adds [[]] via prompt
+            new_content = kwargs["content"]
+            if not new_content or not new_content.strip():
+                logger.warning(f"Refusing to update bucket {bucket_id} with empty content")
+                return False
+            post.content = new_content  # wikilink injection disabled; LLM adds [[]] via prompt
         if "tags" in kwargs:
             post["tags"] = kwargs["tags"]
         if "importance" in kwargs:
