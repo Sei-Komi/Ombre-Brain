@@ -932,7 +932,7 @@ class Dehydrator:
 
         validated = []
         for item in items:
-            if not isinstance(item, dict) or not item.get("content"):
+            if not isinstance(item, dict) or not item.get("content") or not str(item.get("content", "")).strip():
                 continue
             try:
                 importance = max(

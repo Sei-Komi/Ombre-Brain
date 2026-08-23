@@ -318,6 +318,10 @@ class BucketManager:
           ``feel_202605011423_V085``）。如果与已有桶冲突，自动追加秒级后缀。
           为空 → 走默认 ``generate_bucket_id()``（12 位 hex）。
         """
+        # 空内容校验：绝不创建空桶。标题有了内容没了是最危险的bug。
+        if not content or not content.strip():
+            raise ValueError("桶内容不能为空。拒绝创建空桶。")
+
         # 写文件之前先校验 embedding 可用——fail-fast，不留「文件已存在但
         # 向量缺失」的孤儿桶（rule.md §1.5 的「不静默」现在延伸为「不降级」）。
         self._require_embedding_available()

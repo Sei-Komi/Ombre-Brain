@@ -402,6 +402,10 @@ async def _merge_or_create_inner(
                 else:
                     # --- LLM 压缩合并（grow 路径）---
                     merged = await rt.dehydrator.merge(bucket["content"], content)
+                # 空内容兜底：LLM合并返回空时保留原文+新文拼接，绝不写空桶
+                if not merged or not merged.strip():
+                    rt.logger.warning("merge returned empty, falling back to raw concat")
+                    merged = f"{bucket['content'].rstrip()}\n\n---\n{content.strip()}"
                 old_v = bucket["metadata"].get("valence") or 0.5
                 old_a = bucket["metadata"].get("arousal") or 0.3
                 merged_valence = round((old_v + valence) / 2, 2) if 0 <= valence <= 1 else old_v

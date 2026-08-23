@@ -60,7 +60,11 @@ async def grow_core(content: str) -> str:
 
     for item in items:
         try:
-            size_err = check_content_size(item.get("content", ""))
+            item_content = item.get("content", "")
+            if not item_content or not item_content.strip():
+                results.append(f"⚠️{item.get('name', '?')}（空内容，已跳过）")
+                continue
+            size_err = check_content_size(item_content)
             if size_err:
                 results.append(f"⚠️{item.get('name', '?')}（{size_err}）")
                 continue
