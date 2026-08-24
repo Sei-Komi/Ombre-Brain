@@ -199,32 +199,38 @@ class APIEmbeddingEngine(BaseEmbeddingEngine):
     async def generate_async(self, text: str) -> list[float]:
         if not text or not text.strip():
             return []
-        try:
-            response = await self._client.embeddings.create(
-                model=self.model,
-                input=text[:_MAX_INPUT_CHARS],
-            )
-            if response.data and len(response.data) > 0:
-                vec = response.data[0].embedding
-                # 第一次拿到向量时确认真实维度
-                if vec and len(vec) != self._dim:
-                    self._dim = len(vec)
-                if vec:
-                    return list(vec)
-            # 拿到了 2xx 响应但没有可用向量 —— 不能静默返回 []，否则向量化「成功
-            # 调用却没结果」会无声无息（#3）。记 OB-E001 让错误面板可见。
-            self._record_e001(
-                f"backend=api model={self.model} 返回空向量"
-                f"（base_url={self.base_url}，检查 model 名 / base_url / key 是否匹配该 provider）"
-            )
-            return []
-        except Exception as e:
-            _hint = _humanize_api_error(e)
-            self._record_e001(
-                f"backend=api model={self.model} base_url={self.base_url} "
-                f"err={type(e).__name__}: {e}" + (f" {_hint}" if _hint else "")
-            )
-            return []
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = await self._client.embeddings.create(
+                    model=self.model,
+                    input=text[:_MAX_INPUT_CHARS],
+                )
+                if response.data and len(response.data) > 0:
+                    vec = response.data[0].embedding
+                    if vec and len(vec) != self._dim:
+                        self._dim = len(vec)
+                    if vec:
+                        return list(vec)
+                self._record_e001(
+                    f"backend=api model={self.model} 返回空向量"
+                    f"（base_url={self.base_url}，检查 model 名 / base_url / key 是否匹配该 provider）"
+                )
+                return []
+            except Exception as e:
+                is_rate_limit = "429" in str(e) or "rate" in str(e).lower() or "quota" in str(e).lower()
+                if is_rate_limit and attempt < max_retries - 1:
+                    wait = 30 * (attempt + 1)
+                    logger.info(f"[embedding] 429 rate limit, retry in {wait}s (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                _hint = _humanize_api_error(e)
+                self._record_e001(
+                    f"backend=api model={self.model} base_url={self.base_url} "
+                    f"err={type(e).__name__}: {e}" + (f" {_hint}" if _hint else "")
+                )
+                return []
+        return []
 
     @staticmethod
     def _record_e001(detail: str) -> None:
@@ -280,24 +286,38 @@ class GeminiNativeEmbeddingEngine(BaseEmbeddingEngine):
         model_id = strip_native_resource_prefix(self.model)
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:embedContent"
         payload = {"content": {"parts": [{"text": text[:_MAX_INPUT_CHARS]}]}}
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as c:
-                r = await c.post(url, params={"key": self.api_key}, json=payload)
-                r.raise_for_status()
-            values = r.json().get("embedding", {}).get("values", [])
-            if values and len(values) != self._dim:
-                self._dim = len(values)
-            if values:
-                return list(values)
-            self._record_e001(
-                f"backend=gemini_native model={self.model} 返回空向量（检查模型名是否支持 embedContent）"
-            )
-            return []
-        except Exception as e:
-            self._record_e001(
-                f"backend=gemini_native model={self.model} err={type(e).__name__}: {e}"
-            )
-            return []
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout_seconds) as c:
+                    r = await c.post(url, params={"key": self.api_key}, json=payload)
+                    if r.status_code == 429 and attempt < max_retries - 1:
+                        wait = 30 * (attempt + 1)
+                        logger.info(f"[embedding] Gemini 429 rate limit, retry in {wait}s (attempt {attempt + 1}/{max_retries})")
+                        await asyncio.sleep(wait)
+                        continue
+                    r.raise_for_status()
+                values = r.json().get("embedding", {}).get("values", [])
+                if values and len(values) != self._dim:
+                    self._dim = len(values)
+                if values:
+                    return list(values)
+                self._record_e001(
+                    f"backend=gemini_native model={self.model} 返回空向量（检查模型名是否支持 embedContent）"
+                )
+                return []
+            except Exception as e:
+                is_rate_limit = "429" in str(e) or "rate" in str(e).lower() or "quota" in str(e).lower()
+                if is_rate_limit and attempt < max_retries - 1:
+                    wait = 30 * (attempt + 1)
+                    logger.info(f"[embedding] Gemini 429 rate limit, retry in {wait}s (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                self._record_e001(
+                    f"backend=gemini_native model={self.model} err={type(e).__name__}: {e}"
+                )
+                return []
+        return []
 
     @staticmethod
     def _record_e001(detail: str) -> None:
