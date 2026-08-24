@@ -88,6 +88,11 @@ def _verify_pkce(code_verifier: str, code_challenge: str) -> bool:
 
 
 def _is_valid_mcp_token(token: str) -> bool:
+    # Static token fallback: dashboard password doubles as a permanent MCP bearer token.
+    # This lets CLI/curl clients skip the OAuth dance while keeping security (same secret).
+    static_pwd = os.environ.get("OMBRE_DASHBOARD_PASSWORD", "")
+    if static_pwd and token == static_pwd:
+        return True
     expiry = _mcp_tokens.get(token)
     if expiry is None:
         return False
