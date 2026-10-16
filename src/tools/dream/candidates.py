@@ -50,6 +50,15 @@ def collect_core_context(all_buckets: list) -> list:
     return core[:20]
 
 
+def _parse_ts(val) -> datetime | None:
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(str(val))
+    except (ValueError, TypeError):
+        return None
+
+
 def collect_candidates(all_buckets: list, window_hours: int) -> list:
     candidates = [
         b for b in all_buckets
@@ -62,25 +71,49 @@ def collect_candidates(all_buckets: list, window_hours: int) -> list:
 
     def _within_window(meta: dict) -> bool:
         for key in ("last_active", "created"):
-            ts = meta.get(key, "")
-            if not ts:
-                continue
-            try:
-                if datetime.fromisoformat(str(ts)) >= cutoff:
-                    return True
-            except (ValueError, TypeError):
-                continue
+            ts = _parse_ts(meta.get(key, ""))
+            if ts and ts >= cutoff:
+                return True
         return False
 
+    def _is_new(meta: dict) -> bool:
+        """True if bucket was created within the window (genuinely new content)."""
+        ts = _parse_ts(meta.get("created", ""))
+        return ts is not None and ts >= cutoff
+
     recent = [b for b in candidates if _within_window(b["metadata"])]
-    recent.sort(
+
+    # Split into genuinely new vs merely touched-by-search old buckets.
+    # Ensure new content is never squeezed out by old buckets whose
+    # last_active was refreshed by breath/search touch().
+    new_buckets = [b for b in recent if _is_new(b["metadata"])]
+    touched_old = [b for b in recent if not _is_new(b["metadata"])]
+
+    new_buckets.sort(
+        key=lambda b: b["metadata"].get("created", ""),
+        reverse=True,
+    )
+    touched_old.sort(
         key=lambda b: b["metadata"].get("last_active") or b["metadata"].get("created", ""),
         reverse=True,
     )
-    if len(recent) > DREAM_MAX_CANDIDATES:
-        recent.sort(
+
+    if len(new_buckets) >= DREAM_MAX_CANDIDATES:
+        if len(new_buckets) > DREAM_MAX_CANDIDATES:
+            new_buckets.sort(
+                key=lambda b: rt.decay_engine.calculate_score(b["metadata"]),
+                reverse=True,
+            )
+            new_buckets = new_buckets[:DREAM_MAX_CANDIDATES]
+        return new_buckets
+
+    # Fill remaining slots with touched old buckets
+    remaining = DREAM_MAX_CANDIDATES - len(new_buckets)
+    if len(touched_old) > remaining:
+        touched_old.sort(
             key=lambda b: rt.decay_engine.calculate_score(b["metadata"]),
             reverse=True,
         )
-        recent = recent[:DREAM_MAX_CANDIDATES]
-    return recent
+        touched_old = touched_old[:remaining]
+
+    return new_buckets + touched_old
