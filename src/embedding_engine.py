@@ -75,9 +75,10 @@ _MAX_INPUT_CHARS = 2000
 
 # Google 已退役的 embedding model 名 → 自动映射到当前可用名
 _RETIRED_GEMINI_MODELS = {
-    "text-embedding-004": "gemini-embedding-001",
-    "text-embedding-005": "gemini-embedding-001",
-    "embedding-001": "gemini-embedding-001",
+    "text-embedding-004": "gemini-embedding-2",
+    "text-embedding-005": "gemini-embedding-2",
+    "embedding-001": "gemini-embedding-2",
+    "gemini-embedding-001": "gemini-embedding-2",
 }
 
 
@@ -432,14 +433,14 @@ class EmbeddingEngine:
                 timeout_seconds=timeout_seconds,
             )
         elif api_format == "gemini":
-            model = _resolve_gemini_model(embed_cfg.get("model") or "gemini-embedding-001")
+            model = _resolve_gemini_model(embed_cfg.get("model") or "gemini-embedding-2")
             self._backend = GeminiNativeEmbeddingEngine(
                 api_key=api_key,
                 model=model,
                 timeout_seconds=timeout_seconds,
             )
         else:
-            model = _resolve_gemini_model(embed_cfg.get("model") or "gemini-embedding-001")
+            model = _resolve_gemini_model(embed_cfg.get("model") or "gemini-embedding-2")
             base_url = (
                 (embed_cfg.get("base_url") or "").strip()
                 or "https://generativelanguage.googleapis.com/v1beta/openai/"
