@@ -208,10 +208,15 @@ def register(mcp) -> None:
                 sh.embedding_engine.enabled = emb["enabled"]
                 updated.append("embedding.enabled")
             if "model" in e:
-                emb["model"] = e["model"]
-                sh.embedding_engine.model = emb["model"]
+                try:
+                    from embedding_engine import _resolve_gemini_model
+                except ImportError:
+                    from ..embedding_engine import _resolve_gemini_model
+                resolved = _resolve_gemini_model(e["model"])
+                emb["model"] = resolved
+                sh.embedding_engine.model = resolved
                 if sh.embedding_engine._backend:
-                    sh.embedding_engine._backend.model = emb["model"]  # type: ignore[attr-defined]
+                    sh.embedding_engine._backend.model = resolved  # type: ignore[attr-defined]
                 updated.append("embedding.model")
             if "timeout_seconds" in e:
                 emb["timeout_seconds"] = e["timeout_seconds"]

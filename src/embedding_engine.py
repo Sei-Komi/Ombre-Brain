@@ -73,6 +73,23 @@ _API_TIMEOUT_SECONDS = 30.0
 # 输入截断长度
 _MAX_INPUT_CHARS = 2000
 
+# Google 已退役的 embedding model 名 → 自动映射到当前可用名
+_RETIRED_GEMINI_MODELS = {
+    "text-embedding-004": "gemini-embedding-001",
+    "text-embedding-005": "gemini-embedding-001",
+    "embedding-001": "gemini-embedding-001",
+}
+
+
+def _resolve_gemini_model(name: str) -> str:
+    """把已退役的 Gemini embedding model 名映射到当前可用的名字。"""
+    resolved = _RETIRED_GEMINI_MODELS.get(name)
+    if resolved:
+        logger.warning(
+            f"[embedding] model '{name}' 已被 Google 退役，自动映射到 '{resolved}'"
+        )
+    return resolved or name
+
 
 def _norm_model(name: str) -> str:
     """归一化模型名用于「同一性」比较。
@@ -415,14 +432,14 @@ class EmbeddingEngine:
                 timeout_seconds=timeout_seconds,
             )
         elif api_format == "gemini":
-            model = embed_cfg.get("model") or "gemini-embedding-001"
+            model = _resolve_gemini_model(embed_cfg.get("model") or "gemini-embedding-001")
             self._backend = GeminiNativeEmbeddingEngine(
                 api_key=api_key,
                 model=model,
                 timeout_seconds=timeout_seconds,
             )
         else:
-            model = embed_cfg.get("model") or "gemini-embedding-001"
+            model = _resolve_gemini_model(embed_cfg.get("model") or "gemini-embedding-001")
             base_url = (
                 (embed_cfg.get("base_url") or "").strip()
                 or "https://generativelanguage.googleapis.com/v1beta/openai/"
