@@ -144,6 +144,7 @@ async def _backfill_run() -> None:
         _backfill_state["missing"] = len(missing)
         _backfill_state["status"] = "embedding"
 
+        _backfill_state["failed_ids"] = []
         for idx, (bid, content) in enumerate(missing):
             try:
                 ok = await engine.generate_and_store(bid, content)
@@ -151,8 +152,20 @@ async def _backfill_run() -> None:
                     _backfill_state["done"] += 1
                 else:
                     _backfill_state["failed"] += 1
+                    _backfill_state["failed_ids"].append({
+                        "id": bid,
+                        "content_len": len(content),
+                        "content_preview": content[:100],
+                        "reason": "generate_and_store returned False",
+                    })
             except Exception as e:
                 _backfill_state["failed"] += 1
+                _backfill_state["failed_ids"].append({
+                    "id": bid,
+                    "content_len": len(content),
+                    "content_preview": content[:100],
+                    "reason": str(e)[:200],
+                })
                 logger.warning(f"[backfill] embed failed for {bid}: {e}")
             # 每 20 条小憩一下，避免打爆云端速率限制
             if (idx + 1) % 20 == 0:
