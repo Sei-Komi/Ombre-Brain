@@ -498,6 +498,32 @@ def register(mcp) -> None:
             return err
         return JSONResponse({"ok": True, "backfill": _backfill_state})
 
+    @mcp.custom_route("/api/embedding/missing", methods=["GET"])
+    async def api_embedding_missing(request: Request) -> Response:
+        """列出缺失 embedding 的桶 ID、content 前100字。用于诊断 backfill 失败原因。"""
+        from starlette.responses import JSONResponse
+        err = sh._require_auth(request)
+        if err:
+            return err
+        engine = sh.embedding_engine
+        if not engine:
+            return JSONResponse({"ok": False, "error": "engine not ready"}, status_code=500)
+        all_buckets = await sh.bucket_mgr.list_all(include_archive=True)
+        missing = []
+        for b in all_buckets:
+            content = b.get("content", "")
+            bid = b["id"]
+            has_vec = await engine.get_embedding(bid) is not None
+            if not has_vec:
+                missing.append({
+                    "id": bid,
+                    "title": b.get("metadata", {}).get("title", ""),
+                    "content_len": len(content) if content else 0,
+                    "content_preview": (content[:120] if content else ""),
+                    "empty": not content or not content.strip(),
+                })
+        return JSONResponse({"ok": True, "total": len(all_buckets), "missing_count": len(missing), "missing": missing})
+
     @mcp.custom_route("/api/embedding/local/status", methods=["GET"])
     async def api_embedding_local_status(request: Request) -> Response:
         """本地 ollama 是否可达 + 已有模型列表 + 目标模型是否就绪。"""
