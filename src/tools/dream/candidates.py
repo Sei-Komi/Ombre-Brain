@@ -26,6 +26,9 @@ from datetime import datetime, timedelta
 from .. import _runtime as rt
 
 DREAM_MAX_CANDIDATES = 40
+# Old buckets that were merely touched (by breath/search) should never
+# dominate dream output.  Cap them so genuinely new content always wins.
+_TOUCHED_OLD_MAX = 8
 
 
 def collect_core_context(all_buckets: list) -> list:
@@ -107,8 +110,9 @@ def collect_candidates(all_buckets: list, window_hours: int) -> list:
             new_buckets = new_buckets[:DREAM_MAX_CANDIDATES]
         return new_buckets
 
-    # Fill remaining slots with touched old buckets
-    remaining = DREAM_MAX_CANDIDATES - len(new_buckets)
+    # Fill remaining slots with touched old buckets, hard-capped to avoid
+    # old high-importance memories flooding dream after a batch touch/reindex.
+    remaining = min(DREAM_MAX_CANDIDATES - len(new_buckets), _TOUCHED_OLD_MAX)
     if len(touched_old) > remaining:
         touched_old.sort(
             key=lambda b: rt.decay_engine.calculate_score(b["metadata"]),
