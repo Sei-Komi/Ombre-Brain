@@ -57,11 +57,9 @@ async def _dehydrate_one(bucket: dict, q_valence: float | None) -> dict | None:
         try:
             summary = await rt.dehydrator.dehydrate(strip_wikilinks(bucket["content"]), clean_meta)
         except Exception as dehy_err:
-            if not is_core:
-                raise
-            rt.logger.warning(f"core search result dehydrate failed, using raw fallback: {dehy_err}")
+            rt.logger.warning(f"search result dehydrate failed, using raw fallback: {dehy_err}")
             summary = _raw_core_fallback(bucket["content"])
-        if is_core and not str(summary or "").strip():
+        if not str(summary or "").strip():
             summary = _raw_core_fallback(bucket["content"])
 
         if is_core:

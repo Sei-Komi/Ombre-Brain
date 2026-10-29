@@ -476,6 +476,10 @@ class EmbeddingEngine:
         self._vec_ids: list[str] = []
         self._vec_matrix: np.ndarray | None = None
         self._vec_lock = threading.Lock()
+        # query embedding LRU 缓存：同一个 breath 调用里 bucket_mgr.search 和
+        # search.py 各调一次 search_similar(query)，缓存避免重复打 Gemini API
+        self._query_cache: dict[str, list[float]] = {}
+        self._query_cache_max = 64
         if self.enabled:
             self._load_vectors_into_memory()
 
@@ -725,13 +729,22 @@ class EmbeddingEngine:
     async def search_similar(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
         """返回 [(bucket_id, similarity)] 按相似度倒序。
         使用内存缓存的 numpy 矩阵做批量余弦相似度，比逐条 JSON 解析快 100x+。
+        query embedding 有 LRU 缓存，同一文本不会重复调 API。
         """
         if not self.enabled:
             return []
         try:
-            query_embedding = await self._generate_async(query)
-            if not query_embedding:
-                return []
+            cached = self._query_cache.get(query)
+            if cached:
+                query_embedding = cached
+            else:
+                query_embedding = await self._generate_async(query)
+                if not query_embedding:
+                    return []
+                if len(self._query_cache) >= self._query_cache_max:
+                    oldest = next(iter(self._query_cache))
+                    del self._query_cache[oldest]
+                self._query_cache[query] = query_embedding
         except Exception as e:
             logger.warning(f"Query embedding failed: {e}")
             return []
